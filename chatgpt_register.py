@@ -4,23 +4,24 @@ ChatGPT 批量自动注册工具 (并发版) - DuckMail 临时邮箱版
 功能: 使用 DuckMail 临时邮箱，并发自动注册 ChatGPT 账号，自动获取 OTP 验证码
 """
 
-import os
-import re
-import uuid
-import json
-import random
-import string
-import time
-import sys
-import threading
-import traceback
-import secrets
-import hashlib
 import base64
+import hashlib
+import json
+import logging
+import os
+import random
+import re
+import secrets
+import string
+import threading
+import time
+import traceback
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse, parse_qs, urlencode
 
 from curl_cffi import requests as curl_requests
+
 
 # ================= 加载配置 =================
 def _load_config():
@@ -106,27 +107,56 @@ _print_lock = threading.Lock()
 _file_lock = threading.Lock()
 
 
+def _setup_file_logger():
+    """创建按天归档的文件日志记录器，日志写入 ./logs/YYYY-MM-DD.log"""
+    from datetime import datetime, timezone, timedelta
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    log_dir = os.path.join(base_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+
+    now = datetime.now(tz=timezone(timedelta(hours=8)))
+    log_file = os.path.join(log_dir, f"{now.strftime('%Y-%m-%d')}.log")
+
+    logger = logging.getLogger("chatgpt_register")
+    logger.setLevel(logging.DEBUG)
+
+    # 避免重复添加 handler
+    if not logger.handlers:
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setLevel(logging.DEBUG)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"
+        ))
+        logger.addHandler(fh)
+
+    return logger
+
+
+_error_logger = _setup_file_logger()
+
 # Chrome 指纹配置: impersonate 与 sec-ch-ua 必须匹配真实浏览器
 _CHROME_PROFILES = [
     {
-        "major": 131, "impersonate": "chrome131",
-        "build": 6778, "patch_range": (69, 205),
-        "sec_ch_ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+        "major": 119, "impersonate": "chrome119",
+        "build": 6045, "patch_range": (123, 199),
+        "sec_ch_ua": '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
     },
     {
-        "major": 133, "impersonate": "chrome133a",
-        "build": 6943, "patch_range": (33, 153),
-        "sec_ch_ua": '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+        "major": 120, "impersonate": "chrome120",
+        "build": 6099, "patch_range": (62, 199),
+        "sec_ch_ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
     },
     {
-        "major": 136, "impersonate": "chrome136",
-        "build": 7103, "patch_range": (48, 175),
-        "sec_ch_ua": '"Chromium";v="136", "Google Chrome";v="136", "Not.A/Brand";v="99"',
+        "major": 123, "impersonate": "chrome123",
+        "build": 6312, "patch_range": (56, 172),
+        "sec_ch_ua": '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
     },
     {
-        "major": 142, "impersonate": "chrome142",
-        "build": 7540, "patch_range": (30, 150),
-        "sec_ch_ua": '"Chromium";v="142", "Google Chrome";v="142", "Not_A Brand";v="99"',
+        "major": 124, "impersonate": "chrome124",
+        "build": 6367, "patch_range": (60, 178),
+        "sec_ch_ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
     },
 ]
 
@@ -146,8 +176,8 @@ def _random_delay(low=0.3, high=1.0):
 
 
 def _make_trace_headers():
-    trace_id = random.randint(10**17, 10**18 - 1)
-    parent_id = random.randint(10**17, 10**18 - 1)
+    trace_id = random.randint(10 ** 17, 10 ** 18 - 1)
+    parent_id = random.randint(10 ** 17, 10 ** 18 - 1)
     tp = f"00-{uuid.uuid4().hex}-{format(parent_id, '016x')}-01"
     return {
         "traceparent": tp, "tracestate": "dd=s:1;o:rum",
@@ -484,12 +514,14 @@ def _generate_password(length=14):
 
 def _create_duckmail_session():
     """创建带重试的 DuckMail 请求会话"""
-    session = curl_requests.Session()
+    session = curl_requests.Session(verify=False)
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json",
         "Content-Type": "application/json",
     })
+    if DEFAULT_PROXY:
+        session.proxies = {"http": DEFAULT_PROXY, "https": DEFAULT_PROXY}
     return session
 
 
@@ -509,40 +541,47 @@ def create_temp_email():
     headers = {"Authorization": f"Bearer {DUCKMAIL_BEARER}"}
     session = _create_duckmail_session()
 
-    try:
-        # 1. 创建账号
-        payload = {"address": email, "password": password}
-        res = session.post(
-            f"{api_base}/accounts",
-            json=payload,
-            headers=headers,
-            timeout=15,
-            impersonate="chrome131"
-        )
+    max_retries = 3
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            # 1. 创建账号
+            payload = {"address": email, "password": password}
+            res = session.post(
+                f"{api_base}/accounts",
+                json=payload,
+                headers=headers,
+                timeout=30,
+                impersonate="chrome131"
+            )
 
-        if res.status_code not in [200, 201]:
-            raise Exception(f"创建邮箱失败: {res.status_code} - {res.text[:200]}")
+            if res.status_code not in [200, 201]:
+                raise Exception(f"创建邮箱失败: {res.status_code} - {res.text[:200]}")
 
-        # 2. 获取 Token（用于读取邮件）
-        time.sleep(0.5)
-        token_payload = {"address": email, "password": password}
-        token_res = session.post(
-            f"{api_base}/token",
-            json=token_payload,
-            timeout=15,
-            impersonate="chrome131"
-        )
+            # 2. 获取 Token（用于读取邮件）
+            time.sleep(0.5)
+            token_payload = {"address": email, "password": password}
+            token_res = session.post(
+                f"{api_base}/token",
+                json=token_payload,
+                timeout=30,
+                impersonate="chrome131"
+            )
 
-        if token_res.status_code == 200:
-            token_data = token_res.json()
-            mail_token = token_data.get("token")
-            if mail_token:
-                return email, password, mail_token
+            if token_res.status_code == 200:
+                token_data = token_res.json()
+                mail_token = token_data.get("token")
+                if mail_token:
+                    return email, password, mail_token
 
-        raise Exception(f"获取邮件 Token 失败: {token_res.status_code}")
+            raise Exception(f"获取邮件 Token 失败: {token_res.status_code}")
 
-    except Exception as e:
-        raise Exception(f"DuckMail 创建邮箱失败: {e}")
+        except Exception as e:
+            last_error = e
+            if attempt < max_retries:
+                print(f"[DuckMail] 第 {attempt}/{max_retries} 次失败: {e}，{2 * attempt}s 后重试...")
+                time.sleep(2 * attempt)
+    raise Exception(f"DuckMail 创建邮箱失败 (重试{max_retries}次): {last_error}")
 
 
 def _fetch_emails_duckmail(mail_token: str):
@@ -647,13 +686,22 @@ def _random_name():
         "James", "Emma", "Liam", "Olivia", "Noah", "Ava", "Ethan", "Sophia",
         "Lucas", "Mia", "Mason", "Isabella", "Logan", "Charlotte", "Alexander",
         "Amelia", "Benjamin", "Harper", "William", "Evelyn", "Henry", "Abigail",
-        "Sebastian", "Emily", "Jack", "Elizabeth",
+        "Sebastian", "Emily", "Jack", "Elizabeth", "James", "John", "Robert", "Michael", "David", "William", "Richard",
+        "Joseph", "Thomas", "Charles", "Christopher", "Daniel", "Paul", "Mark", "Donald", "George", "Kenneth", "Steven",
+        "Edward", "Brian", "Mary", "Patricia", "Jennifer", "Linda", "Elizabeth", "Barbara", "Susan", "Jessica", "Sarah",
+        "Margaret", "Lisa", "Nancy", "Karen", "Betty", "Dorothy", "Sandra", "Ashley", "Kimberly", "Emily", "Donna",
+        "Michelle", "Carol", "Amanda", "Melissa", "Deborah", "Stephanie", "Rebecca", "Laura", "Cynthia", "Angela",
     ])
     last = random.choice([
         "Smith", "Johnson", "Brown", "Davis", "Wilson", "Moore", "Taylor",
         "Clark", "Hall", "Young", "Anderson", "Thomas", "Jackson", "White",
         "Harris", "Martin", "Thompson", "Garcia", "Robinson", "Lewis",
-        "Walker", "Allen", "King", "Wright", "Scott", "Green",
+        "Walker", "Allen", "King", "Wright", "Scott", "Green", "Smith", "Johnson", "Williams", "Brown", "Jones",
+        "Garcia", "Miller", "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson",
+        "Thomas", "Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez",
+        "Clark", "Ramirez", "Lewis", "Robinson", "Walker", "Young", "Allen", "King", "Wright", "Scott", "Torres",
+        "Nguyen", "Hill", "Flores", "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell",
+        "Carter", "Roberts",
     ])
     return f"{first} {last}"
 
@@ -675,7 +723,9 @@ class ChatGPTRegister:
         self.auth_session_logging_id = str(uuid.uuid4())
         self.impersonate, self.chrome_major, self.chrome_full, self.ua, self.sec_ch_ua = _random_chrome_version()
 
-        self.session = curl_requests.Session(impersonate=self.impersonate)
+        self.session = curl_requests.Session(impersonate=self.impersonate,
+                                             verify=False
+                                             )
 
         self.proxy = proxy
         if self.proxy:
@@ -700,7 +750,7 @@ class ChatGPTRegister:
     def _log(self, step, method, url, status, body=None):
         prefix = f"[{self.tag}] " if self.tag else ""
         lines = [
-            f"\n{'='*60}",
+            f"\n{'=' * 60}",
             f"{prefix}[Step] {step}",
             f"{prefix}[{method}] {url}",
             f"{prefix}[Status] {status}",
@@ -710,7 +760,7 @@ class ChatGPTRegister:
                 lines.append(f"{prefix}[Response] {json.dumps(body, indent=2, ensure_ascii=False)[:1000]}")
             except Exception:
                 lines.append(f"{prefix}[Response] {str(body)[:1000]}")
-        lines.append(f"{'='*60}")
+        lines.append(f"{'=' * 60}")
         with _print_lock:
             print("\n".join(lines))
 
@@ -723,7 +773,7 @@ class ChatGPTRegister:
 
     def _create_duckmail_session(self):
         """创建带重试的 DuckMail 请求会话"""
-        session = curl_requests.Session()
+        session = curl_requests.Session(verify=False)
         session.headers.update({
             "User-Agent": self.ua,
             "Accept": "application/json",
@@ -749,40 +799,48 @@ class ChatGPTRegister:
         headers = {"Authorization": f"Bearer {DUCKMAIL_BEARER}"}
         session = self._create_duckmail_session()
 
-        try:
-            # 1. 创建账号
-            payload = {"address": email, "password": password}
-            res = session.post(
-                f"{api_base}/accounts",
-                json=payload,
-                headers=headers,
-                timeout=15,
-                impersonate=self.impersonate
-            )
+        max_retries = 3
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                # 1. 创建账号
+                payload = {"address": email, "password": password}
+                res = session.post(
+                    f"{api_base}/accounts",
+                    json=payload,
+                    headers=headers,
+                    timeout=30,
+                    impersonate=self.impersonate
+                )
 
-            if res.status_code not in [200, 201]:
-                raise Exception(f"创建邮箱失败: {res.status_code} - {res.text[:200]}")
+                if res.status_code not in [200, 201]:
+                    raise Exception(f"创建邮箱失败: {res.status_code} - {res.text[:200]}")
 
-            # 2. 获取 Token（用于读取邮件）
-            time.sleep(0.5)
-            token_payload = {"address": email, "password": password}
-            token_res = session.post(
-                f"{api_base}/token",
-                json=token_payload,
-                timeout=15,
-                impersonate=self.impersonate
-            )
+                # 2. 获取 Token（用于读取邮件）
+                time.sleep(0.5)
+                token_payload = {"address": email, "password": password}
+                token_res = session.post(
+                    f"{api_base}/token",
+                    json=token_payload,
+                    timeout=30,
+                    impersonate=self.impersonate
+                )
 
-            if token_res.status_code == 200:
-                token_data = token_res.json()
-                mail_token = token_data.get("token")
-                if mail_token:
-                    return email, password, mail_token
+                if token_res.status_code == 200:
+                    token_data = token_res.json()
+                    mail_token = token_data.get("token")
+                    if mail_token:
+                        return email, password, mail_token
 
-            raise Exception(f"获取邮件 Token 失败: {token_res.status_code}")
+                raise Exception(f"获取邮件 Token 失败: {token_res.status_code}")
 
-        except Exception as e:
-            raise Exception(f"DuckMail 创建邮箱失败: {e}")
+            except Exception as e:
+                last_error = e
+                self._print(f"[DuckMail] 第 {attempt}/{max_retries} 次失败: {e}")
+                if attempt < max_retries:
+                    self._print(f"[DuckMail] {2 * attempt}s 后重试...")
+                    time.sleep(2 * attempt)
+        raise Exception(f"DuckMail 创建邮箱失败 (重试{max_retries}次): {last_error}")
 
     def _fetch_emails_duckmail(self, mail_token: str):
         """从 DuckMail 获取邮件列表"""
@@ -882,12 +940,13 @@ class ChatGPTRegister:
 
     def visit_homepage(self):
         url = f"{self.BASE}/"
+        self._print(url)
         r = self.session.get(url, headers={
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "Upgrade-Insecure-Requests": "1",
         }, allow_redirects=True)
         self._log("0. Visit homepage", "GET", url, r.status_code,
-                   {"cookies_count": len(self.session.cookies)})
+                  {"cookies_count": len(self.session.cookies)})
 
     def get_csrf(self) -> str:
         url = f"{self.BASE}/api/auth/csrf"
@@ -919,22 +978,36 @@ class ChatGPTRegister:
         return authorize_url
 
     def authorize(self, url: str) -> str:
-        r = self.session.get(url, headers={
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Referer": f"{self.BASE}/", "Upgrade-Insecure-Requests": "1",
-        }, allow_redirects=True)
-        final_url = str(r.url)
-        self._log("3. Authorize", "GET", url, r.status_code, {"final_url": final_url})
-        return final_url
+        retries = 3
+        last_exception = None
+        for i in range(retries):
+            try:
+                r = self.session.get(url, headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Referer": f"{self.BASE}/", "Upgrade-Insecure-Requests": "1",
+                }, allow_redirects=True, timeout=60)
+                final_url = str(r.url)
+                self._log("3. Authorize", "GET", url, r.status_code, {"final_url": final_url})
+                return final_url
+            except Exception as e:
+                last_exception = e
+                self._print(f"Authorize timeout/error, retrying ({i + 1}/{retries}): {e}")
+                time.sleep(2)
+
+        if last_exception:
+            raise last_exception
+        raise Exception("Authorize failed after retries")
 
     def register(self, email: str, password: str):
         url = f"{self.AUTH}/api/accounts/user/register"
         headers = {"Content-Type": "application/json", "Accept": "application/json",
-                    "Referer": f"{self.AUTH}/create-account/password", "Origin": self.AUTH}
+                   "Referer": f"{self.AUTH}/create-account/password", "Origin": self.AUTH}
         headers.update(_make_trace_headers())
         r = self.session.post(url, json={"username": email, "password": password}, headers=headers)
-        try: data = r.json()
-        except Exception: data = {"text": r.text[:500]}
+        try:
+            data = r.json()
+        except Exception:
+            data = {"text": r.text[:500]}
         self._log("4. Register", "POST", url, r.status_code, data)
         return r.status_code, data
 
@@ -944,30 +1017,36 @@ class ChatGPTRegister:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": f"{self.AUTH}/create-account/password", "Upgrade-Insecure-Requests": "1",
         }, allow_redirects=True)
-        try: data = r.json()
-        except Exception: data = {"final_url": str(r.url), "status": r.status_code}
+        try:
+            data = r.json()
+        except Exception:
+            data = {"final_url": str(r.url), "status": r.status_code}
         self._log("5. Send OTP", "GET", url, r.status_code, data)
         return r.status_code, data
 
     def validate_otp(self, code: str):
         url = f"{self.AUTH}/api/accounts/email-otp/validate"
         headers = {"Content-Type": "application/json", "Accept": "application/json",
-                    "Referer": f"{self.AUTH}/email-verification", "Origin": self.AUTH}
+                   "Referer": f"{self.AUTH}/email-verification", "Origin": self.AUTH}
         headers.update(_make_trace_headers())
         r = self.session.post(url, json={"code": code}, headers=headers)
-        try: data = r.json()
-        except Exception: data = {"text": r.text[:500]}
+        try:
+            data = r.json()
+        except Exception:
+            data = {"text": r.text[:500]}
         self._log("6. Validate OTP", "POST", url, r.status_code, data)
         return r.status_code, data
 
     def create_account(self, name: str, birthdate: str):
         url = f"{self.AUTH}/api/accounts/create_account"
         headers = {"Content-Type": "application/json", "Accept": "application/json",
-                    "Referer": f"{self.AUTH}/about-you", "Origin": self.AUTH}
+                   "Referer": f"{self.AUTH}/about-you", "Origin": self.AUTH}
         headers.update(_make_trace_headers())
         r = self.session.post(url, json={"name": name, "birthdate": birthdate}, headers=headers)
-        try: data = r.json()
-        except Exception: data = {"text": r.text[:500]}
+        try:
+            data = r.json()
+        except Exception:
+            data = {"text": r.text[:500]}
         self._log("7. Create Account", "POST", url, r.status_code, data)
         if isinstance(data, dict):
             cb = data.get("continue_url") or data.get("url") or data.get("redirect_url")
@@ -1394,7 +1473,8 @@ class ChatGPTRegister:
 
             final_url = str(r.url)
             redirects = len(getattr(r, "history", []) or [])
-            self._print(f"[OAuth] /oauth/authorize -> {r.status_code}, final={(final_url or '-')[:140]}, redirects={redirects}")
+            self._print(
+                f"[OAuth] /oauth/authorize -> {r.status_code}, final={(final_url or '-')[:140]}, redirects={redirects}")
 
             has_login = any(getattr(c, "name", "") == "login_session" for c in self.session.cookies)
             self._print(f"[OAuth] login_session: {'已获取' if has_login else '未获取'}")
@@ -1418,7 +1498,8 @@ class ChatGPTRegister:
                     )
                     final_url = str(r2.url)
                     redirects2 = len(getattr(r2, "history", []) or [])
-                    self._print(f"[OAuth] /api/oauth/oauth2/auth -> {r2.status_code}, final={(final_url or '-')[:140]}, redirects={redirects2}")
+                    self._print(
+                        f"[OAuth] /api/oauth/oauth2/auth -> {r2.status_code}, final={(final_url or '-')[:140]}, redirects={redirects2}")
                 except Exception as e:
                     self._print(f"[OAuth] /api/oauth/oauth2/auth 异常: {e}")
 
@@ -1460,7 +1541,8 @@ class ChatGPTRegister:
         if not authorize_final_url:
             return None
 
-        continue_referer = authorize_final_url if authorize_final_url.startswith(OAUTH_ISSUER) else f"{OAUTH_ISSUER}/log-in"
+        continue_referer = authorize_final_url if authorize_final_url.startswith(
+            OAUTH_ISSUER) else f"{OAUTH_ISSUER}/log-in"
 
         self._print("[OAuth] 2/7 POST /api/accounts/authorize/continue")
         resp_continue = _post_authorize_continue(continue_referer)
@@ -1473,7 +1555,8 @@ class ChatGPTRegister:
             has_login_session, authorize_final_url = _bootstrap_oauth_session()
             if not authorize_final_url:
                 return None
-            continue_referer = authorize_final_url if authorize_final_url.startswith(OAUTH_ISSUER) else f"{OAUTH_ISSUER}/log-in"
+            continue_referer = authorize_final_url if authorize_final_url.startswith(
+                OAUTH_ISSUER) else f"{OAUTH_ISSUER}/log-in"
             resp_continue = _post_authorize_continue(continue_referer)
             if resp_continue is None:
                 return None
@@ -1538,9 +1621,9 @@ class ChatGPTRegister:
         self._print(f"[OAuth] verify page={page_type or '-'} next={(continue_url or '-')[:140]}")
 
         need_oauth_otp = (
-            page_type == "email_otp_verification"
-            or "email-verification" in (continue_url or "")
-            or "email-otp" in (continue_url or "")
+                page_type == "email_otp_verification"
+                or "email-verification" in (continue_url or "")
+                or "email-otp" in (continue_url or "")
         )
 
         if need_oauth_otp:
@@ -1632,12 +1715,12 @@ class ChatGPTRegister:
             code, _ = self._oauth_follow_for_code(consent_url, referer=f"{OAUTH_ISSUER}/log-in/password")
 
         consent_hint = (
-            ("consent" in (consent_url or ""))
-            or ("sign-in-with-chatgpt" in (consent_url or ""))
-            or ("workspace" in (consent_url or ""))
-            or ("organization" in (consent_url or ""))
-            or ("consent" in page_type)
-            or ("organization" in page_type)
+                ("consent" in (consent_url or ""))
+                or ("sign-in-with-chatgpt" in (consent_url or ""))
+                or ("workspace" in (consent_url or ""))
+                or ("organization" in (consent_url or ""))
+                or ("consent" in page_type)
+                or ("organization" in page_type)
         )
 
         if not code and consent_hint:
@@ -1710,12 +1793,12 @@ def _register_one(idx, total, proxy, output_file):
         birthdate = _random_birthdate()
 
         with _print_lock:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"  [{idx}/{total}] 注册: {email}")
             print(f"  ChatGPT密码: {chatgpt_password}")
             print(f"  邮箱密码: {email_pwd}")
             print(f"  姓名: {name} | 生日: {birthdate}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
         # 2. 执行注册流程
         reg.run_register(email, chatgpt_password, name, birthdate, mail_token)
@@ -1746,9 +1829,11 @@ def _register_one(idx, total, proxy, output_file):
 
     except Exception as e:
         error_msg = str(e)
+        # 完整堆栈写入日志文件
+        _error_logger.error(f"[{idx}] 注册失败: {error_msg}\n{traceback.format_exc()}")
+        # CLI 只显示简要错误信息
         with _print_lock:
             print(f"\n[FAIL] [{idx}] 注册失败: {error_msg}")
-            traceback.print_exc()
         return False, None, error_msg
 
 
@@ -1763,7 +1848,7 @@ def run_batch(total_accounts: int = 3, output_file="registered_accounts.txt",
         return
 
     actual_workers = min(max_workers, total_accounts)
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print(f"  ChatGPT 批量自动注册 (DuckMail 临时邮箱版)")
     print(f"  注册数量: {total_accounts} | 并发数: {actual_workers}")
     print(f"  DuckMail: {DUCKMAIL_API_BASE}")
@@ -1773,7 +1858,7 @@ def run_batch(total_accounts: int = 3, output_file="registered_accounts.txt",
         print(f"  OAuth Client: {OAUTH_CLIENT_ID}")
         print(f"  Token输出: {TOKEN_JSON_DIR}/, {AK_FILE}, {RK_FILE}")
     print(f"  输出文件: {output_file}")
-    print(f"{'#'*60}\n")
+    print(f"{'#' * 60}\n")
 
     success_count = 0
     fail_count = 0
@@ -1798,18 +1883,19 @@ def run_batch(total_accounts: int = 3, output_file="registered_accounts.txt",
                     print(f"  [账号 {idx}] 失败: {err}")
             except Exception as e:
                 fail_count += 1
+                _error_logger.error(f"账号 {idx} 线程异常: {e}\n{traceback.format_exc()}")
                 with _print_lock:
                     print(f"[FAIL] 账号 {idx} 线程异常: {e}")
 
     elapsed = time.time() - start_time
     avg = elapsed / total_accounts if total_accounts else 0
-    print(f"\n{'#'*60}")
+    print(f"\n{'#' * 60}")
     print(f"  注册完成! 耗时 {elapsed:.1f} 秒")
     print(f"  总数: {total_accounts} | 成功: {success_count} | 失败: {fail_count}")
     print(f"  平均速度: {avg:.1f} 秒/个")
     if success_count > 0:
         print(f"  结果文件: {output_file}")
-    print(f"{'#'*60}")
+    print(f"{'#' * 60}")
 
 
 def main():
@@ -1835,7 +1921,7 @@ def main():
             proxy = input("输入代理地址 (留空=不使用代理): ").strip() or None
     else:
         env_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") \
-                 or os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
+                    or os.environ.get("ALL_PROXY") or os.environ.get("all_proxy")
         if env_proxy:
             print(f"[Info] 检测到环境变量代理: {env_proxy}")
             use_env = input("使用此代理? (Y/n): ").strip().lower()

@@ -1,0 +1,10 @@
+codex_tokens
+ak.txt
+rk.txt
+registered_accounts.txt
+
+logs/
+
+.idea
+
+__pycache__
