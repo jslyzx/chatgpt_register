@@ -1,13 +1,9 @@
 {
   "_comment": "ChatGPT(DuckMail)",
-
   "total_accounts": 5,
-
   "duckmail_api_base": "https://api.duckmail.sbs",
-  "duckmail_bearer": "",
-
-  "proxy": "",
-
+  "duckmail_bearer": "MTI5MEtMa3NkOTAyLj0vLnNka2w5OGozMg==",
+  "proxy": "http://127.0.0.1:10808",
   "output_file": "registered_accounts.txt",
   "enable_oauth": true,
   "oauth_required": true,
@@ -17,6 +13,6 @@
   "ak_file": "ak.txt",
   "rk_file": "rk.txt",
   "token_json_dir": "codex_tokens",
-  "upload_api_url": "http://localhost:8317/v0/management/auth-files",
-  "upload_api_token": "你的cpa面板登录密码"
+  "upload_api_url": "http://127.0.0.1:3336/v0/management/auth-files",
+  "upload_api_token": "bb8a08cc792be724fbeb"
 }

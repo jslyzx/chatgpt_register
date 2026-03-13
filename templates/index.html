@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatGPT Register Web UI</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            900: '#111827',
+                            800: '#1F2937',
+                            700: '#374151',
+                            600: '#4B5563',
+                        },
+                        primary: '#3B82F6',
+                        accent: '#10B981',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['Fira Code', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0F172A; /* slate-900 */
+            color: #F8FAFC; /* slate-50 */
+            overflow-x: hidden;
+        }
+        
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        
+        .terminal-container {
+            font-family: 'Fira Code', monospace;
+            background-color: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            color: #d1d5db; /* gray-300 */
+            border: 1px solid rgba(71, 85, 105, 0.4);
+            box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.4);
+            scrollbar-width: thin;
+            scrollbar-color: #475569 transparent;
+        }
+
+        .terminal-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .terminal-container::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.1);
+        }
+        .terminal-container::-webkit-scrollbar-thumb {
+            background-color: #475569;
+            border-radius: 4px;
+        }
+
+        /* Animations */
+        @keyframes pulse-ring {
+            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+        
+        .running-indicator {
+            animation: pulse-ring 2s infinite;
+        }
+        
+        .fade-enter-active,
+        .fade-leave-active {
+            transition: opacity 0.3s ease;
+        }
+        .fade-enter-from,
+        .fade-leave-to {
+            opacity: 0;
+        }
+        
+        input[type="text"], input[type="number"], input[type="password"] {
+            background-color: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(71, 85, 105, 0.5);
+            color: white;
+            transition: all 0.2s;
+        }
+        
+        input[type="text"]:focus, input[type="number"]:focus, input[type="password"]:focus {
+            border-color: #3B82F6;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3);
+        }
+
+        input[type="checkbox"] {
+            accent-color: #3B82F6;
+        }
+        
+        .tab-btn {
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab-btn.active {
+            border-bottom-color: #3B82F6;
+            color: #60A5FA;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(15, 23, 42, 0.8) 100%);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            border-left: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
+</head>
+<body class="min-h-screen text-slate-200 antialiased selection:bg-blue-500/30">
+    <div id="app" class="flex flex-col h-screen overflow-hidden">
+        
+        <!-- Header -->
+        <header class="glass-panel shrink-0 flex items-center justify-between px-6 py-4 z-10 sticky top-0">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                    <i class="ph ph-robot text-2xl text-white"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">ChatGPT Register</h1>
+                    <p class="text-xs text-slate-400 font-medium tracking-wider uppercase">Auto CLI Panel</p>
+                </div>
+            </div>
+            <div class="flex items-center space-x-4">
+                <div v-if="stats.is_running" class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20">
+                    <div class="w-2.5 h-2.5 rounded-full bg-emerald-500 running-indicator"></div>
+                    <span class="text-xs font-semibold text-emerald-400">Task Running</span>
+                </div>
+                <div v-else class="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/50 border border-slate-700">
+                    <div class="w-2 h-2 rounded-full bg-slate-500"></div>
+                    <span class="text-xs font-semibold text-slate-400">Idle</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Layout -->
+        <div class="flex flex-1 overflow-hidden">
+            
+            <!-- Left Panel (Controls) -->
+            <div class="w-full md:w-5/12 lg:w-1/3 flex flex-col border-r border-slate-800/50 bg-[#0B1120] overflow-y-auto">
+                
+                <!-- Tabs -->
+                <div class="flex px-2 pt-2 space-x-1 border-b border-slate-800 sticky top-0 bg-[#0B1120] z-10">
+                    <button @click="activeTab = 'dashboard'" :class="['px-4 py-3 text-sm font-medium transition-colors tab-btn cursor-pointer outline-none', activeTab === 'dashboard' ? 'active' : 'text-slate-400 hover:text-slate-200']">
+                        <div class="flex items-center space-x-2">
+                            <i class="ph ph-squares-four text-lg"></i>
+                            <span>Dashboard</span>
+                        </div>
+                    </button>
+                    <button @click="activeTab = 'config'" :class="['px-4 py-3 text-sm font-medium transition-colors tab-btn cursor-pointer outline-none', activeTab === 'config' ? 'active' : 'text-slate-400 hover:text-slate-200']">
+                        <div class="flex items-center space-x-2">
+                            <i class="ph ph-sliders"></i>
+                            <span>Config</span>
+                        </div>
+                    </button>
+                    <button @click="activeTab = 'accounts'; fetchAccounts()" :class="['px-4 py-3 text-sm font-medium transition-colors tab-btn cursor-pointer outline-none', activeTab === 'accounts' ? 'active' : 'text-slate-400 hover:text-slate-200']">
+                        <div class="flex items-center space-x-2">
+                            <i class="ph ph-users"></i>
+                            <span>Accounts</span>
+                        </div>
+                    </button>
+                </div>
+
+                <!-- Tab Content -->
+                <div class="flex-1 p-5 overflow-y-auto w-full">
+                    
+                    <!-- Dashboard Tab -->
+                    <transition name="fade" mode="out-in">
+                        <div v-if="activeTab === 'dashboard'" class="space-y-6">
+                            
+                            <!-- Stats Grid -->
+                            <div class="grid grid-cols-2 gap-4">
+                                <div class="stat-card p-4 rounded-xl">
+                                    <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1 flex items-center"><i class="ph ph-users mr-1.5"></i> Total Registered</div>
+                                    <div class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-blue-600">{{ stats.accounts_count }}</div>
+                                </div>
+                                <div class="stat-card p-4 rounded-xl">
+                                    <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1 flex items-center"><i class="ph ph-key mr-1.5"></i> Access Tokens</div>
+                                    <div class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-teal-500">{{ stats.ak_count }}</div>
+                                </div>
+                                <div class="stat-card p-4 rounded-xl col-span-2 flex items-center justify-between">
+                                    <div>
+                                        <div class="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1 flex items-center"><i class="ph ph-file-json mr-1.5"></i> Token JSON Files</div>
+                                        <div class="text-2xl font-bold text-slate-200">{{ stats.token_files }}</div>
+                                    </div>
+                                    <div class="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center">
+                                        <i class="ph ph-database text-xl text-slate-400"></i>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Start Task Card -->
+                            <div class="glass-panel p-5 rounded-xl border border-blue-500/20 relative overflow-hidden">
+                                <div class="absolute inset-0 bg-blue-500/5 pointer-events-none"></div>
+                                <h3 class="text-sm font-semibold text-blue-400 uppercase tracking-wider mb-4 flex items-center">
+                                    <i class="ph ph-rocket-launch mr-2"></i> Launch Task
+                                </h3>
+                                
+                                <div class="space-y-4">
+                                    <div class="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-400 mb-1">Total Accounts</label>
+                                            <input type="number" v-model="startParams.total_accounts" class="w-full px-3 py-2 rounded-lg text-sm" min="1">
+                                        </div>
+                                        <div>
+                                            <label class="block text-xs font-medium text-slate-400 mb-1">Max Workers</label>
+                                            <input type="number" v-model="startParams.max_workers" class="w-full px-3 py-2 rounded-lg text-sm" min="1" max="50">
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Proxy (Optional)</label>
+                                        <input type="text" v-model="startParams.proxy" placeholder="http://127.0.0.1:7890" class="w-full px-3 py-2 rounded-lg text-sm">
+                                    </div>
+                                    <button @click="startTask" :disabled="stats.is_running" 
+                                            class="w-full py-3 px-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-lg font-medium shadow-lg shadow-blue-500/25 transition-all transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center space-x-2">
+                                        <i class="ph ph-play-circle text-xl"></i>
+                                        <span>{{ stats.is_running ? 'Task is Running...' : 'Start Registration' }}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Config Tab -->
+                        <div v-else-if="activeTab === 'config'" class="space-y-5">
+                            <div class="glass-panel p-5 rounded-xl">
+                                <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4 border-b border-slate-700 pb-2">DuckMail Settings</h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">API Base</label>
+                                        <input type="text" v-model="config.duckmail_api_base" class="w-full px-3 py-2 rounded-lg text-sm">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Bearer Token</label>
+                                        <input type="password" v-model="config.duckmail_bearer" class="w-full px-3 py-2 rounded-lg text-sm font-mono">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="glass-panel p-5 rounded-xl">
+                                <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4 border-b border-slate-700 pb-2">OAuth Settings</h3>
+                                <div class="space-y-4">
+                                    <label class="flex items-center space-x-3 cursor-pointer">
+                                        <input type="checkbox" v-model="config.enable_oauth" class="form-checkbox h-4 w-4 rounded-sm">
+                                        <span class="text-sm font-medium text-slate-300">Enable OAuth</span>
+                                    </label>
+                                    <label class="flex items-center space-x-3 cursor-pointer">
+                                        <input type="checkbox" v-model="config.oauth_required" class="form-checkbox h-4 w-4 rounded-sm">
+                                        <span class="text-sm font-medium text-slate-300">OAuth Required</span>
+                                    </label>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">OAuth Issuer</label>
+                                        <input type="text" v-model="config.oauth_issuer" class="w-full px-3 py-2 rounded-lg text-sm">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Client ID</label>
+                                        <input type="text" v-model="config.oauth_client_id" class="w-full px-3 py-2 rounded-lg text-sm font-mono">
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Save Config -->
+                            <button @click="saveConfig" class="w-full py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white rounded-lg font-medium border border-slate-700 transition-colors flex items-center justify-center space-x-2">
+                                <i class="ph ph-floppy-disk text-xl text-blue-400"></i>
+                                <span>Save Configuration</span>
+                            </button>
+                        </div>
+
+                        <!-- Accounts Tab -->
+                        <div v-else-if="activeTab === 'accounts'" class="h-full flex flex-col">
+                            <div class="flex items-center justify-between mb-3">
+                                <h3 class="text-sm font-semibold text-slate-300 uppercase tracking-wider">Registered Accounts</h3>
+                                <button @click="fetchAccounts()" class="p-1.5 rounded-md hover:bg-slate-800 text-slate-400 transition-colors" title="Refresh">
+                                    <i class="ph ph-arrows-clockwise text-lg"></i>
+                                </button>
+                            </div>
+                            <textarea readonly v-model="accountsList" class="flex-1 w-full h-[400px] bg-[#0B1120] border border-slate-800 rounded-lg p-3 text-xs font-mono text-emerald-400 focus:outline-none resize-none" placeholder="No accounts registered yet."></textarea>
+                        </div>
+                    </transition>
+                </div>
+            </div>
+
+            <!-- Right Panel (Live Terminal) -->
+            <div class="flex-1 flex flex-col bg-black/90 relative group">
+                <!-- Terminal Header -->
+                <div class="h-10 shrink-0 bg-[#1e1e1e] flex items-center px-4 justify-between border-b x border-slate-800">
+                    <div class="flex space-x-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    </div>
+                    <div class="text-xs text-slate-400 font-mono tracking-wider flex items-center">
+                        <i class="ph ph-terminal-window mr-2"></i> system.stdout
+                    </div>
+                    <button @click="logs = []" class="text-xs text-slate-500 hover:text-slate-300 uppercase font-semibold">Clear</button>
+                </div>
+                
+                <!-- Terminal Body -->
+                <div id="terminal-box" class="flex-1 terminal-container p-4 overflow-y-auto text-sm leading-relaxed tracking-wide whitespace-pre-wrap">
+                    <div v-for="(line, idx) in logs" :key="idx" class="break-words" :class="{
+                        'text-emerald-400': typeof line === 'string' && (line.includes('[OK]') || line.includes('成功!')),
+                        'text-red-400': typeof line === 'string' && (line.includes('[FAIL]') || line.includes('失败') || line.includes('[Error]')),
+                        'text-blue-400 font-bold': typeof line === 'string' && line.includes('='),
+                        'text-yellow-300': typeof line === 'string' && line.includes('⚠️')
+                    }">{{ line }}</div>
+                    <div v-if="stats.is_running" class="mt-2 text-slate-500 animate-pulse">_</div>
+                </div>
+                
+                <!-- Overlay glow -->
+                <div class="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-emerald-500/5 to-transparent pointer-events-none"></div>
+            </div>
+            
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, reactive, onMounted, onUnmounted } = Vue;
+
+        createApp({
+            setup() {
+                const activeTab = ref('dashboard');
+                const stats = reactive({ accounts_count: 0, ak_count: 0, token_files: 0, is_running: false });
+                const config = reactive({});
+                const startParams = reactive({ total_accounts: 3, max_workers: 3, proxy: '' });
+                const accountsList = ref('');
+                const logs = ref([]);
+                let eventSource = null;
+                
+                const fetchStats = async () => {
+                    try {
+                        const res = await fetch('/api/stats');
+                        if (res.ok) {
+                            const data = await res.json();
+                            Object.assign(stats, data);
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch stats');
+                    }
+                };
+
+                const fetchConfig = async () => {
+                    try {
+                        const res = await fetch('/api/config');
+                        if (res.ok) {
+                            const data = await res.json();
+                            Object.assign(config, data);
+                            startParams.total_accounts = data.total_accounts || 3;
+                            startParams.proxy = data.proxy || '';
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch config');
+                    }
+                };
+
+                const saveConfig = async () => {
+                    try {
+                        await fetch('/api/config', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(config)
+                        });
+                        alert('Configuration saved effectively!');
+                    } catch (e) {
+                        alert('Failed to save config.');
+                    }
+                };
+
+                const fetchAccounts = async () => {
+                    try {
+                        const res = await fetch('/api/accounts');
+                        if (res.ok) {
+                            const data = await res.json();
+                            accountsList.value = data.content;
+                        }
+                    } catch (e) {
+                        console.error('Failed to fetch accounts');
+                    }
+                };
+
+                const startTask = async () => {
+                    try {
+                        const res = await fetch('/api/start', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(startParams)
+                        });
+                        const data = await res.json();
+                        if (data.status === 'success') {
+                            stats.is_running = true;
+                            // Reset logs
+                            logs.value = [];
+                            logs.value.push("--- Initializing Task --- \n");
+                        } else {
+                            alert(data.message);
+                        }
+                    } catch (e) {
+                        alert("Failed to start task");
+                    }
+                };
+                
+                const connectSSE = () => {
+                    eventSource = new EventSource('/api/logs');
+                    eventSource.onmessage = (event) => {
+                        try {
+                            const line = JSON.parse(event.data);
+                            if (typeof line === 'string' && line.includes("keep-alive")) return;
+                            logs.value.push(line);
+                            // Keep max lines to prevent memory issues
+                            if (logs.value.length > 5000) {
+                                logs.value.shift();
+                            }
+                            // auto scroll to bottom of terminal
+                            setTimeout(() => {
+                                const term = document.getElementById('terminal-box');
+                                if (term) {
+                                    if(true) { 
+                                        term.scrollTop = term.scrollHeight;
+                                    }
+                                }
+                            }, 50);
+                        } catch (e) {}
+                    };
+                    eventSource.onerror = (error) => {
+                        console.error("SSE connection error. Reconnecting...");
+                        eventSource.close();
+                        setTimeout(connectSSE, 3000);
+                    };
+                };
+
+                onMounted(() => {
+                    fetchConfig();
+                    fetchStats();
+                    setInterval(fetchStats, 2000); // refresh stats every 2s
+                    connectSSE();
+                });
+
+                onUnmounted(() => {
+                    if (eventSource) eventSource.close();
+                });
+
+                return {
+                    activeTab, stats, config, startParams, accountsList, logs,
+                    saveConfig, startTask, fetchAccounts
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
