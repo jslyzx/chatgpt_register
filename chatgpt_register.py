@@ -81,6 +81,7 @@ def _as_bool(value):
 
 
 _CONFIG = _load_config()
+DOMAIN = _CONFIG["duckmail_api_base"].split("//")[-1].split("/")[0]  # 从 API URL 提取域名
 DUCKMAIL_API_BASE = _CONFIG["duckmail_api_base"]
 DUCKMAIL_BEARER = _CONFIG["duckmail_bearer"]
 DEFAULT_TOTAL_ACCOUNTS = _CONFIG["total_accounts"]
@@ -534,7 +535,7 @@ def create_temp_email():
     chars = string.ascii_lowercase + string.digits
     length = random.randint(8, 13)
     email_local = "".join(random.choice(chars) for _ in range(length))
-    email = f"{email_local}@duckmail.sbs"
+    email = f"{email_local}@{DOMAIN}"
     password = _generate_password()
 
     api_base = DUCKMAIL_API_BASE.rstrip("/")
@@ -691,6 +692,15 @@ def _random_name():
         "Edward", "Brian", "Mary", "Patricia", "Jennifer", "Linda", "Elizabeth", "Barbara", "Susan", "Jessica", "Sarah",
         "Margaret", "Lisa", "Nancy", "Karen", "Betty", "Dorothy", "Sandra", "Ashley", "Kimberly", "Emily", "Donna",
         "Michelle", "Carol", "Amanda", "Melissa", "Deborah", "Stephanie", "Rebecca", "Laura", "Cynthia", "Angela",
+        "James","John","Robert","Michael","David","William","Richard","Joseph","Thomas","Charles","Christopher",
+        "Daniel","Paul","Mark","Donald","George","Kenneth","Steven","Edward","Brian","Mary","Patricia","Jennifer",
+        "Linda","Elizabeth","Barbara","Susan","Jessica","Sarah","Margaret","Lisa","Nancy","Karen","Betty","Dorothy",
+        "Sandra","Ashley","Kimberly","Emily","Donna","Michelle","Carol","Amanda","Melissa","Deborah","Stephanie","Rebecca","Laura","Cynthia","Angela",
+        "Anthony","Kevin","Jason","Matthew","Gary","Timothy","Jose","Larry","Jeffrey","Ryan",
+        "Nicholas","Eric","Jacob","Stephen","Jonathan","Nicole","Heather","Pamela","Amy","Anna",
+        "Christine","Erin","Megan","Alicia","Julie","Joyce","Diane","Virginia","Cheryl","Mildred",
+        "Alfred","Roy","Billy","Steve","Louis","Earl","Jimmy","Ruby","Lois","Jean",
+        "Frances","Ann","Brenda","Terry","Sharon","Cindy","Jane","Doris","Ruth","Lillian",
     ])
     last = random.choice([
         "Smith", "Johnson", "Brown", "Davis", "Wilson", "Moore", "Taylor",
@@ -702,6 +712,16 @@ def _random_name():
         "Clark", "Ramirez", "Lewis", "Robinson", "Walker", "Young", "Allen", "King", "Wright", "Scott", "Torres",
         "Nguyen", "Hill", "Flores", "Green", "Adams", "Nelson", "Baker", "Hall", "Rivera", "Campbell", "Mitchell",
         "Carter", "Roberts",
+        "Smith","Johnson","Williams","Brown","Jones","Garcia","Miller","Davis","Rodriguez","Martinez",
+        "Hernandez","Lopez","Gonzalez","Wilson","Anderson","Thomas","Taylor","Moore","Jackson","Martin",
+        "Lee","Perez","Thompson","White","Harris","Sanchez","Clark","Ramirez","Lewis","Robinson","Walker",
+        "Young","Allen","King","Wright","Scott","Torres","Nguyen","Hill","Flores","Green","Adams","Nelson",
+        "Baker","Hall","Rivera","Campbell","Mitchell","Carter","Roberts",
+        "Evans","Murphy","Cook","Rogers","Morgan","Cooper","Peterson","Bailey","Reed","Bell",
+        "Ward","Coleman","Jenkins","Perry","Powell","Long","Patterson","Hughes","Washington","Butler",
+        "Simmons","Foster","Bryant","Alexander","Griffin","Diaz","Hayes","Ford","Hamilton","Graham",
+        "Sullivan","Wallace","Wood","Owens","Cole","West","Jordan","Reynolds","Fisher","Ellis",
+        "Harrison","Curtis","Carlson","Payne","Moss","Kelley","Vargas","Howell","Castillo","Matthews",
     ])
     return f"{first} {last}"
 
@@ -792,7 +812,7 @@ class ChatGPTRegister:
         chars = string.ascii_lowercase + string.digits
         length = random.randint(8, 13)
         email_local = "".join(random.choice(chars) for _ in range(length))
-        email = f"{email_local}@duckmail.sbs"
+        email = f"{email_local}@{DOMAIN}"
         password = _generate_password()
 
         api_base = DUCKMAIL_API_BASE.rstrip("/")
